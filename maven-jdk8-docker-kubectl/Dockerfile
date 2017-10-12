@@ -1,71 +1,86 @@
-FROM maven:3.5-jdk-8-alpine
+FROM jenkins/jnlp-slave:3.10-1-alpine
 
-RUN apk add --no-cache docker
+#
+# OpenJDK 8
+#
 
+
+# A few reasons for installing distribution-provided OpenJDK:
+#
+#  1. Oracle.  Licensing prevents us from redistributing the official JDK.
+#
+#  2. Compiling OpenJDK also requires the JDK to be installed, and it gets
+#     really hairy.
+#
+#     For some sample build times, see Debian's buildd logs:
+#       https://buildd.debian.org/status/logs.php?pkg=openjdk-8
+
+# Default to UTF-8 file.encoding
+ENV LANG C.UTF-8
+
+# add a simple script that can auto-detect the appropriate JAVA_HOME value
+# based on whether the JDK or only the JRE is installed
+RUN { \
+		echo '#!/bin/sh'; \
+		echo 'set -e'; \
+		echo; \
+		echo 'dirname "$(dirname "$(readlink -f "$(which javac || which java)")")"'; \
+	} > /usr/local/bin/docker-java-home \
+	&& chmod +x /usr/local/bin/docker-java-home
+ENV JAVA_HOME /usr/lib/jvm/java-1.8-openjdk
+ENV PATH $PATH:/usr/lib/jvm/java-1.8-openjdk/jre/bin:/usr/lib/jvm/java-1.8-openjdk/bin
+
+ENV JAVA_VERSION 8u131
+ENV JAVA_ALPINE_VERSION 8.131.11-r2
+
+RUN set -x \
+	&& apk add --no-cache \
+		openjdk8="$JAVA_ALPINE_VERSION" \
+	&& [ "$JAVA_HOME" = "$(docker-java-home)" ]
+
+# If you're reading this and have any feedback on how this image could be
+# improved, please open an issue or a pull request so we can discuss it!
+#
+#   https://github.com/docker-library/openjdk/issues
+
+#
+# Maven https://github.com/carlossg/docker-maven/blob/bdcedecba28295e7fc91256c9e58b0cc1f69ed57/jdk-8-alpine/Dockerfile
+#
+
+RUN apk add --no-cache curl tar bash
+
+ARG MAVEN_VERSION=3.5.0
+ARG USER_HOME_DIR="/root"
+ARG SHA=beb91419245395bd69a4a6edad5ca3ec1a8b64e41457672dc687c173a495f034
+ARG BASE_URL=https://apache.osuosl.org/maven/maven-3/${MAVEN_VERSION}/binaries
+
+RUN mkdir -p /usr/share/maven /usr/share/maven/ref \
+  && curl -fsSL -o /tmp/apache-maven.tar.gz ${BASE_URL}/apache-maven-${MAVEN_VERSION}-bin.tar.gz \
+  && echo "${SHA}  /tmp/apache-maven.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/apache-maven.tar.gz -C /usr/share/maven --strip-components=1 \
+  && rm -f /tmp/apache-maven.tar.gz \
+  && ln -s /usr/share/maven/bin/mvn /usr/bin/mvn
+
+ENV MAVEN_HOME /usr/share/maven
+ENV MAVEN_CONFIG "$USER_HOME_DIR/.m2"
+
+COPY mvn-entrypoint.sh /usr/local/bin/mvn-entrypoint.sh
+COPY settings-docker.xml /usr/share/maven/ref/
+
+VOLUME "$USER_HOME_DIR/.m2"
+
+#
+# Docker
+#
+RUN apk add --no-cache docker=17.05.0-r0
+
+# Kubectl
 ENV KUBE_LATEST_VERSION="v1.7.7"
-
 RUN apk add --update ca-certificates \
  && apk add --update -t deps curl \
  && curl -L https://storage.googleapis.com/kubernetes-release/release/${KUBE_LATEST_VERSION}/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl \
  && chmod +x /usr/local/bin/kubectl \
  && apk del --purge deps \
  && rm /var/cache/apk/*
-
-# #
-# # Docker
-# # https://hub.docker.com/_/docker/
-# # https://github.com/docker-library/docker/blob/168a6d227d021c6d38c3986b7c668702ec172fa7/17.06/Dockerfile
-# #
-
-# # FROM alpine:3.6
-
-# RUN apk add --no-cache \
-# 		ca-certificates
-
-# ENV DOCKER_CHANNEL stable
-# ENV DOCKER_VERSION 17.06.2-ce
-# # TODO ENV DOCKER_SHA256
-# # https://github.com/docker/docker-ce/blob/5b073ee2cf564edee5adca05eee574142f7627bb/components/packaging/static/hash_files !!
-# # (no SHA file artifacts on download.docker.com yet as of 2017-06-07 though)
-
-# RUN set -ex; \
-# # why we use "curl" instead of "wget":
-# # + wget -O docker.tgz https://download.docker.com/linux/static/stable/x86_64/docker-17.03.1-ce.tgz
-# # Connecting to download.docker.com (54.230.87.253:443)
-# # wget: error getting response: Connection reset by peer
-# 	apk add --no-cache --virtual .fetch-deps \
-# 		curl \
-# 		tar \
-# 	; \
-# 	\
-# # this "case" statement is generated via "update.sh"
-# 	apkArch="$(apk --print-arch)"; \
-# 	case "$apkArch" in \
-# 		x86_64) dockerArch='x86_64' ;; \
-# 		s390x) dockerArch='s390x' ;; \
-# 		*) echo >&2 "error: unsupported architecture ($apkArch)"; exit 1 ;;\
-# 	esac; \
-# 	\
-# 	if ! curl -fL -o docker.tgz "https://download.docker.com/linux/static/${DOCKER_CHANNEL}/${dockerArch}/docker-${DOCKER_VERSION}.tgz"; then \
-# 		echo >&2 "error: failed to download 'docker-${DOCKER_VERSION}' from '${DOCKER_CHANNEL}' for '${dockerArch}'"; \
-# 		exit 1; \
-# 	fi; \
-# 	\
-# 	tar --extract \
-# 		--file docker.tgz \
-# 		--strip-components 1 \
-# 		--directory /usr/local/bin/ \
-# 	; \
-# 	rm docker.tgz; \
-# 	\
-# 	apk del .fetch-deps; \
-# 	\
-# 	dockerd -v; \
-# 	docker -v
-
-# COPY docker-entrypoint.sh /usr/local/bin/
-
-# ENTRYPOINT ["docker-entrypoint.sh"]
-# CMD ["sh"]
 
 
